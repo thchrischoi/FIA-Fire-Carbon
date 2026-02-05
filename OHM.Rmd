@@ -259,120 +259,121 @@ TLS.biomass <- ohm.biomass(files)
 ```
 
 ```{r}
-ohm.biomass <- function(files){
-  
-  ## Final structure of output table
-  output.table = data.frame(treeID = character(),
-                             trunk = double(),
-                             branch = double(),
-                             total = double(),
-                             z = double(),
-                             dbh = double() #DBH
-                             )
-  
-  
-  
-  # for (i in 91:nrow(files)){
-  for (i in 1:nrow(files)){
-    
-    ## dbh
-    filtered.fitted.circles.table = data.frame(dbh = double())    
-    
-    ## tree height
-    height.table = data.frame(z = double())
-    
-    ohm.files<-read.csv.ohm.input(files[i,])
-    
-    #We can split the files into trunk and biomass elements
-    trunk <- ohm.files[[1]]
-    branch <- ohm.files[[2]]
-    
-    
-    OHM.output<-OHM.tree(trunk = trunk,
-                     branch = branch,
-                     sg=0.4,
-                     interval = 0.1, buff = 0.1, outlier_pct = 20,
-                     vox.res=0.1, vol.correction=1)
-    
-    ## Tree ID
-    treeID.table = data.frame(treeID = files[i,]$treeID)
-    
-    ## Reduce biomass less than 1 to 0 since it is placeholder data
-    if(OHM.output$biomass$trunk < 0.3){
-      OHM.output$biomass$trunk = 0
-       OHM.output$trunk.volume$vol = 0
-    }
-    if(OHM.output$biomass$branch < 0.1){
-      OHM.output$biomass$branch = 0
-      OHM.output$branch.volume$z = 0
-    }
-    
-    OHM.output$biomass$total = OHM.output$biomass$trunk + OHM.output$biomass$branch
-    
-    
-    ## Find tree height
-    
-    ## Correct tree height so that circles fit start at 0
-    OHM.output$filtered.circle.fits$z = OHM.output$filtered.circle.fits$z - min(OHM.output$filtered.circle.fits$z)
-    OHM.output$all.circle.fits$z = OHM.output$all.circle.fits$z - min(OHM.output$all.circle.fits$z)
-    
-    if (max(OHM.output$all.circle.fits$z) > 0.1){
-      height.table = rbind(height.table, max(OHM.output$all.circle.fits$z))
-      
-      names(height.table) = 'z'
-      
-    } else if (max(OHM.output$all.circle.fits$z) <= 0.1){
-      height.table = rbind(height.table, data.frame(z = c(0)))
-      
-      names(height.table) = 'z'
-    }
-    
-     
-    
-    ## Find dbh
-    
-    ## find the closest row to the target height of 1.2 (this is in case a circle fit is not performed for 1.2)
-    target.height <- 1.2
-    closest.row <- OHM.output$filtered.circle.fits[which.min(abs(OHM.output$filtered.circle.fits$z - target.height)), ]
-    final.height = closest.row$z
-    
-    if(max(OHM.output$filtered.circle.fits$z) >= 1.2){
-      
-      # print('T1')
-      
-      filtered.fitted.circles.table = rbind(filtered.fitted.circles.table, OHM.output$filtered.circle.fits) |>
-        dplyr::filter(z == final.height) |> # 1.2m = 4.5ft = dbh
-        dplyr::transmute(dbh = dplyr::coalesce(r,0, na.rm = T)*2) # radius * 2 == diameter
-      
-      
-    } else if (max(OHM.output$filtered.circle.fits$z) < final.height){
-      # print('T2')
-      filtered.fitted.circles.table = rbind(filtered.fitted.circles.table, data.frame(dbh = c(0)))
-      
-    }
-    
-    
-    
-    
-    output.table = rbind(output.table, cbind(treeID.table, # treeID
-                                             OHM.output$biomass, #  biomass
-                                             height.table, # Tree height
-                                             
-                                             filtered.fitted.circles.table # dbh
-                                             ))
-    
-    paste(treeID.table, 'completed')
-    
-    
-  }
-  
-  return(output.table)
-  
-}
-
-
-
-TLS.biomass <- ohm.biomass(files)
+## Old script that doesn't have checkpoints for tracking progress/erros
+# ohm.biomass <- function(files){
+#   
+#   ## Final structure of output table
+#   output.table = data.frame(treeID = character(),
+#                              trunk = double(),
+#                              branch = double(),
+#                              total = double(),
+#                              z = double(),
+#                              dbh = double() #DBH
+#                              )
+#   
+#   
+#   
+#   # for (i in 91:nrow(files)){
+#   for (i in 1:nrow(files)){
+#     
+#     ## dbh
+#     filtered.fitted.circles.table = data.frame(dbh = double())    
+#     
+#     ## tree height
+#     height.table = data.frame(z = double())
+#     
+#     ohm.files<-read.csv.ohm.input(files[i,])
+#     
+#     #We can split the files into trunk and biomass elements
+#     trunk <- ohm.files[[1]]
+#     branch <- ohm.files[[2]]
+#     
+#     
+#     OHM.output<-OHM.tree(trunk = trunk,
+#                      branch = branch,
+#                      sg=0.4,
+#                      interval = 0.1, buff = 0.1, outlier_pct = 20,
+#                      vox.res=0.1, vol.correction=1)
+#     
+#     ## Tree ID
+#     treeID.table = data.frame(treeID = files[i,]$treeID)
+#     
+#     ## Reduce biomass less than 1 to 0 since it is placeholder data
+#     if(OHM.output$biomass$trunk < 0.3){
+#       OHM.output$biomass$trunk = 0
+#        OHM.output$trunk.volume$vol = 0
+#     }
+#     if(OHM.output$biomass$branch < 0.1){
+#       OHM.output$biomass$branch = 0
+#       OHM.output$branch.volume$z = 0
+#     }
+#     
+#     OHM.output$biomass$total = OHM.output$biomass$trunk + OHM.output$biomass$branch
+#     
+#     
+#     ## Find tree height
+#     
+#     ## Correct tree height so that circles fit start at 0
+#     OHM.output$filtered.circle.fits$z = OHM.output$filtered.circle.fits$z - min(OHM.output$filtered.circle.fits$z)
+#     OHM.output$all.circle.fits$z = OHM.output$all.circle.fits$z - min(OHM.output$all.circle.fits$z)
+#     
+#     if (max(OHM.output$all.circle.fits$z) > 0.1){
+#       height.table = rbind(height.table, max(OHM.output$all.circle.fits$z))
+#       
+#       names(height.table) = 'z'
+#       
+#     } else if (max(OHM.output$all.circle.fits$z) <= 0.1){
+#       height.table = rbind(height.table, data.frame(z = c(0)))
+#       
+#       names(height.table) = 'z'
+#     }
+#     
+#      
+#     
+#     ## Find dbh
+#     
+#     ## find the closest row to the target height of 1.2 (this is in case a circle fit is not performed for 1.2)
+#     target.height <- 1.2
+#     closest.row <- OHM.output$filtered.circle.fits[which.min(abs(OHM.output$filtered.circle.fits$z - target.height)), ]
+#     final.height = closest.row$z
+#     
+#     if(max(OHM.output$filtered.circle.fits$z) >= 1.2){
+#       
+#       # print('T1')
+#       
+#       filtered.fitted.circles.table = rbind(filtered.fitted.circles.table, OHM.output$filtered.circle.fits) |>
+#         dplyr::filter(z == final.height) |> # 1.2m = 4.5ft = dbh
+#         dplyr::transmute(dbh = dplyr::coalesce(r,0, na.rm = T)*2) # radius * 2 == diameter
+#       
+#       
+#     } else if (max(OHM.output$filtered.circle.fits$z) < final.height){
+#       # print('T2')
+#       filtered.fitted.circles.table = rbind(filtered.fitted.circles.table, data.frame(dbh = c(0)))
+#       
+#     }
+#     
+#     
+#     
+#     
+#     output.table = rbind(output.table, cbind(treeID.table, # treeID
+#                                              OHM.output$biomass, #  biomass
+#                                              height.table, # Tree height
+#                                              
+#                                              filtered.fitted.circles.table # dbh
+#                                              ))
+#     
+#     paste(treeID.table, 'completed')
+#     
+#     
+#   }
+#   
+#   return(output.table)
+#   
+# }
+# 
+# 
+# 
+# TLS.biomass <- ohm.biomass(files)
 
 
 
@@ -545,6 +546,14 @@ TLS.carbon <- TLS.biomass2 |>
                                                                         DRYBIO_BOLE,
                                                                         DRYBIO_STUMP,
                                                                         DRYBIO_BG,
+                                                                        DRYBIO_SAWLOG,
+                                                                        DRYBIO_STEM,
+                                                                        DRYBIO_STEM_BARK,
+                                                                        DRYBIO_STUMP_BARK,
+                                                                        DRYBIO_BOLE_BARK,
+                                                                        DRYBIO_BRANCH,
+                                                                        DRYBIO_FOLIAGE,
+                                                                        DRYBIO_SAWLOG_BARK,
                                                                         CARBON_AG,
                                                                         CARBON_BG
                                                                         ) 
