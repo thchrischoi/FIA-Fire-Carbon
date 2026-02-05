@@ -1,0 +1,533 @@
+---
+title: "TLS Downed trees OHM"
+author: "Christopher Tsz Hin Choi"
+date: "2024-11-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(rgl.useNULL = TRUE)
+
+```
+
+
+```{r}
+library(terra)
+library(stringr)
+library(pracma)   # for cross(), dot(), rotationMatrix()
+library(rgl)      # for visualization (optional)
+library(rglwidget) # rmarkdown running rgl visualizations
+library(circular)
+library(lidR)
+library(viridis)
+library(fpc)
+library(VoxR)
+library(dplyr)
+library(stringr)
+library(DBI)
+library(RSQLite)
+
+```
+
+###Source OHM functions
+```{r}
+
+source("OHM-master/R/2024_OHM_FUN.R")
+
+```
+
+
+
+###Data
+```{r}
+## point to TLS data
+files.trunk.downed <- list.files("Data/TLS_Scans/Trees/All_Downed_Trees", pattern="trunk_downed.csv", full.names = TRUE, recursive=TRUE)
+
+# files.branch.downed <- list.files("Data/TLS_Scans/Trees/All_Downed_Trees", pattern="branch_downed.csv", full.names = TRUE, recursive=TRUE)
+
+
+tree.ID <- list.dirs("Data/TLS_Scans/Trees/All_Downed_Trees", full.names = FALSE)
+
+
+########################################
+
+# REF_SPECIES table
+REF_SPECIES <- read.csv('Data/FIADB_REFERENCE/REF_SPECIES.csv')
+
+
+
+######################################################
+## SQLITE database
+######################################################
+
+#database path
+sqlite_path <- file.path('Data/SQLite_FIADB_CO/SQLite_FIADB_CO.db')
+
+## connection to db
+conn <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+
+DBI::dbListTables(conn)
+# DBI::dbListFields(conn, 'TREE')
+
+
+## Tree table
+######################################################
+TREE <- DBI::dbReadTable(conn, "TREE")
+
+
+## Disconnect from db
+DBI::dbDisconnect(conn)
+
+```
+
+```{r}
+files<-data.frame(treeID=tree.ID[-1],
+                  trunk.downed=files.trunk.downed)
+
+```
+
+
+## OHM method
+```{r}
+upright_trunk <- function()
+```
+
+```{r}
+upright_trunk <- function(trunk_path) {
+  # --- read trunk CSV ---
+  pc <- read.csv(trunk_path, header = FALSE) |>
+    dplyr::transmute(coords = as.character(V1)) |>
+    tidyr::separate(coords, into = c("x", "y", "z", "intensity", "extra"), sep = " ") |>
+    dplyr::mutate(across(everything(), as.numeric)) |>
+    dplyr::select(-intensity, -extra)
+  
+  # --- PCA to find main axis ---
+  pca <- prcomp(pc, center = TRUE, scale. = FALSE)
+  axis_main <- as.numeric(pca$rotation[, 1])
+  center <- colMeans(pc)
+  
+  # --- Project onto main axis ---
+  projections <- as.vector((as.matrix(pc - center) %*% axis_main))
+  
+  # --- bottom point = lowest projection (robust) ---
+  bottom_index <- which.min(projections)
+  bottom_point <- pc[bottom_index, ]
+  
+  # --- Rotation to align with Z-axis ---
+  z_axis <- c(0, 0, 1)
+  v <- pracma::cross(axis_main, z_axis)
+  s <- norm(v, type = "2")
+  c <- sum(axis_main * z_axis)
+  Vx <- matrix(c(0, -v[3], v[2],
+                 v[3], 0, -v[1],
+                 -v[2], v[1], 0), nrow = 3, byrow = TRUE)
+  if (s != 0) {
+    R <- diag(3) + Vx + (Vx %*% Vx) * ((1 - c) / (s^2))
+  } else {
+    R <- diag(3)
+  }
+  
+  # --- apply transformation ---
+  pc_centered <- sweep(pc, 2, as.numeric(bottom_point))
+  pc_rotated <- as.matrix(pc_centered) %*% R
+  colnames(pc_rotated) <- c("x", "y", "z")
+  
+  # ensure bottom is at z=0
+  pc_rotated[,3] <- pc_rotated[,3] - min(pc_rotated[,3])
+  
+  pc_rotated <- as.data.frame(pc_rotated)
+  return(pc_rotated)
+}
+```
+
+
+```{r}
+ohm.biomass <- function(files, upright = FALSE) {
+  
+  output.table <- data.frame(treeID = character(),
+                             trunk = double(),
+                             branch = double(),
+                             total = double(),
+                             z = double(),
+                             dbh = double())
+  
+  for (i in 1:nrow(files)) {
+    
+    ohm.files <- list()
+    
+    if (upright) {
+      # --- downed tree workflow ---
+      trunk_raw <- files[i, ]$trunk.downed
+      trunk <- upright_trunk(trunk_raw)
+      branch <- NULL  # or empty if not available
+    } else {
+      # --- standing tree workflow ---
+      ohm.files <- read.csv.ohm.input(files[i, ])
+      trunk <- ohm.files[[1]]
+      branch <- ohm.files[[2]]
+    }
+    
+    # --- run OHM model ---
+    OHM.output <- OHM.tree(trunk = trunk,
+                           branch = branch,
+                           sg = 0.4,
+                           interval = 0.1,
+                           buff = 0.1,
+                           outlier_pct = 20,
+                           vox.res = 0.1,
+                           vol.correction = 1)
+    
+    # --- clean biomass values ---
+    if (OHM.output$biomass$trunk < 0.3) OHM.output$biomass$trunk <- 0
+    if (OHM.output$biomass$branch < 0.1) OHM.output$biomass$branch <- 0
+    
+    OHM.output$biomass$total <- OHM.output$biomass$trunk + OHM.output$biomass$branch
+    
+    # --- tree height ---
+    OHM.output$filtered.circle.fits$z <- OHM.output$filtered.circle.fits$z - min(OHM.output$filtered.circle.fits$z)
+    height <- max(OHM.output$filtered.circle.fits$z, na.rm = TRUE)
+    
+    # --- dbh ---
+    target_height <- 1.2
+    closest.row <- OHM.output$filtered.circle.fits[which.min(abs(OHM.output$filtered.circle.fits$z - target_height)), ]
+    dbh <- ifelse(!is.null(closest.row$r), closest.row$r * 2, 0)
+    
+    output.table <- rbind(output.table, data.frame(
+      treeID = files[i, ]$treeID,
+      trunk = OHM.output$biomass$trunk,
+      branch = OHM.output$biomass$branch,
+      total = OHM.output$biomass$total,
+      z = height,
+      dbh = dbh
+    ))
+    
+    message(files[i, ]$treeID, " completed")
+  }
+  
+  return(output.table)
+}
+```
+
+
+```{r}
+TLS.biomass.downed <- ohm.biomass(files, upright = TRUE)
+```
+
+
+
+## Upright the trunk
+```{r}
+pc <- read.csv(files.trunk.downed[1], header = F) |>
+  dplyr::transmute(coords = as.character(V1)) |>
+  tidyr::separate(coords, into = c("x", "y", "z", "intensity", "extra"), sep = " ") |>
+  dplyr::mutate(across(everything(), as.numeric))|>
+  dplyr::select(-intensity, -extra)
+
+head(pc) 
+```
+
+## find main axis with PCA
+```{r}
+pca <- prcomp(pc, center = TRUE, scale. = FALSE)
+axis_main <- pca$rotation[,1]  # first principal component (longest axis)
+center <- colMeans(pc)
+```
+
+```{r}
+# Project points onto main axis
+projections <- as.vector((as.matrix(pc - center) %*% axis_main))
+
+section_stats <- pc |>
+  dplyr::mutate(section = cuts) |>
+  dplyr::group_by(section) |>
+  dplyr::summarize(
+    width = max(x) - min(x) + max(y) - min(y),
+    .groups = "drop"
+  )
+
+# # Slice along axis to find cross-section width
+# n_sections <- 20
+# cuts <- cut(projections, breaks = n_sections)
+# section_stats <- pc |>
+#   dplyr::mutate(section = cuts) |>
+#   dplyr::group_by(section) |>
+#   dplyr::summarize(width = mean(dist(rbind(cbind(x, y), cbind(x, y))))) # rough proxy
+
+# # identify section with largest width (butt)
+# bottom_section <- which.max(section_stats$width)
+# bottom_index <- which(cuts == levels(cuts)[bottom_section])
+# bottom_point <- pc[bottom_index[1], ]
+
+bottom_section <- section_stats$section[which.max(section_stats$width)]
+bottom_index <- which(cuts == bottom_section)
+bottom_point <- pc[bottom_index[1], ]
+
+
+z_axis <- c(0, 0, 1)
+v <- pracma::cross(axis_main, z_axis)
+s <- norm(v, type = "2")
+c <- sum(axis_main * z_axis)
+Vx <- matrix(c(0, -v[3], v[2],
+               v[3], 0, -v[1],
+               -v[2], v[1], 0), nrow=3, byrow=TRUE)
+if (s != 0) {
+  R <- diag(3) + Vx + (Vx %*% Vx) * ((1 - c) / (s^2))
+} else {
+  R <- diag(3)  # already aligned
+}
+
+
+## apply transformation
+pc_centered <- sweep(pc, 2, as.numeric(bottom_point))
+pc_rotated <- as.matrix(pc_centered) %*% R
+colnames(pc_rotated) <- c("x", "y", "z")
+
+# optional: ensure bottom is at z=0
+pc_rotated[,3] <- pc_rotated[,3] - min(pc_rotated[,3])
+
+
+```
+
+```{r}
+
+
+# Example: visualize upright trunk
+open3d()
+points3d(pc_rotated, color = "brown", size = 3)
+
+# render as HTML widget (inline)
+rglwidget()
+
+# ## For .R file (non-markdown)
+# open3d()
+# points3d(pc_rotated, color = "brown", size = 3)
+```
+
+Export uprighted trunk
+```{r}
+folder.path <- sapply(stringr::str_split(files.trunk.downed[1], "/"),head,  -1) |>
+  paste(collapse = "/")
+
+
+output.name <- paste0(folder.path, "/", "8_49_20_01_T06_trunk_downed_upright.csv")
+
+write.csv(pc_rotated, output.name)
+
+
+```
+
+
+Put it all together as a function
+```{r}
+
+
+
+i = 2
+
+# upright.tree = function(downed.tree){
+#   pc <- read.csv(files.trunk.downed[i], header = F) |>
+#     dplyr::transmute(coords = as.character(V1)) |>
+#     tidyr::separate(coords, into = c("x", "y", "z", "intensity", "extra"), sep = " ") |>
+#     dplyr::mutate(across(everything(), as.numeric))|>
+#     dplyr::select(-intensity, -extra)
+# 
+# 
+#   ## find longest axis
+#   pca <- prcomp(pc, center = TRUE, scale. = FALSE)
+#   axis_main <- pca$rotation[,1]  # first principal component (longest axis)
+#   center <- colMeans(pc)
+#   
+#   
+#   # Project points onto main axis
+#   projections <- as.vector((as.matrix(pc - center) %*% axis_main))
+# 
+#   
+#   # Slice the trunk along its main axis into N sections
+#   n_sections <- 20
+#   cuts <- cut(projections, breaks = n_sections)
+#   
+#   
+#   section_stats <- pc |>
+#     dplyr::mutate(section = cuts) |>
+#     dplyr::group_by(section) |>
+#     dplyr::summarize(
+#       width = max(x) - min(x) + max(y) - min(y),
+#       .groups = "drop"
+#   )
+# 
+#   bottom_section <- section_stats$section[which.max(section_stats$width)]
+#   bottom_index <- which(cuts == bottom_section)
+#   bottom_point <- pc[bottom_index[1], ]
+# 
+# 
+#   z_axis <- c(0, 0, 1)
+#   v <- pracma::cross(axis_main, z_axis)
+#   s <- norm(v, type = "2")
+#   c <- sum(axis_main * z_axis)
+#   Vx <- matrix(c(0, -v[3], v[2],
+#                v[3], 0, -v[1],
+#                -v[2], v[1], 0), nrow=3, byrow=TRUE)
+#   if (s != 0) {
+#     R <- diag(3) + Vx + (Vx %*% Vx) * ((1 - c) / (s^2))
+#   } else {
+#     R <- diag(3)  # already aligned
+#   }
+# 
+# 
+#   ## apply transformation
+#   pc_centered <- sweep(pc, 2, as.numeric(bottom_point))
+#   pc_rotated <- as.matrix(pc_centered) %*% R
+#   colnames(pc_rotated) <- c("x", "y", "z")
+#   
+#   # optional: ensure bottom is at z=0
+#   pc_rotated[,3] <- pc_rotated[,3] - min(pc_rotated[,3])
+#   
+#   
+#   
+#   ## Export uprighted trunk
+#   folder.path <- sapply(stringr::str_split(files.trunk.downed[i], "/"),head,  -2) |>
+#   paste(collapse = "/")
+# 
+# 
+#   output.name <- paste0(folder.path, "/Uprighted_Trees/", tree.ID[i+1], "_trunk_downed_upright.csv")
+# 
+#   write.csv(pc_rotated, output.name)
+#   
+#   paste("Uprighted and exported:", i, output.name)
+#   
+#   open3d()
+#   points3d(pc_rotated, color = "brown", size = 3)
+#   
+#   # # render as HTML widget (inline)
+#   # rglwidget()
+# 
+# }
+
+
+####################################
+
+upright.tree = function(downed.tree){
+  pc <- read.csv(files.trunk.downed[i], header = F) |>
+    dplyr::transmute(coords = as.character(V1)) |>
+    tidyr::separate(coords, into = c("x", "y", "z", "intensity", "extra"), sep = " ") |>
+    dplyr::mutate(across(everything(), as.numeric))|>
+    dplyr::select(-intensity, -extra)
+
+
+  # 1) PCA & projections
+  pca <- prcomp(pc[, c("x","y","z")], center = TRUE, scale. = FALSE)
+  axis_main <- as.numeric(pca$rotation[, 1])
+  center <- colMeans(pc)
+  projections <- as.vector((as.matrix(pc - center) %*% axis_main))
+
+  # 2) Slice trunk along its main axis
+  n_sections <- 20
+  cuts <- cut(projections, breaks = n_sections)
+
+  sec_df <- pc %>%
+    dplyr::mutate(proj = projections, section = cuts) %>%
+    dplyr::group_by(section) %>%
+    dplyr::summarize(
+      width = (max(x, na.rm = TRUE) - min(x, na.rm = TRUE)) +
+              (max(y, na.rm = TRUE) - min(y, na.rm = TRUE)),
+      proj_mean = mean(proj, na.rm = TRUE),
+      n = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(proj_mean)
+
+  # If too few sections, just use min projection as bottom
+  if (nrow(sec_df) < 3) {
+    desired_bottom <- "min"
+  } else {
+    k <- 2  # average of how many sections per end
+    k <- min(k, nrow(sec_df) %/% 2)
+    mean_first <- mean(sec_df$width[1:k], na.rm = TRUE)
+    mean_last  <- mean(sec_df$width[(nrow(sec_df)-k+1):nrow(sec_df)], na.rm = TRUE)
+    desired_bottom <- ifelse(mean_first > mean_last, "min", "max")
+  }
+
+  # 3) Pick bottom point
+  if (desired_bottom == "min") {
+    bottom_index <- which.min(projections)
+    bottom_section_idx <- sec_df$section[1]
+  } else {
+    bottom_index <- which.max(projections)
+    bottom_section_idx <- sec_df$section[nrow(sec_df)]
+  }
+  bottom_point <- pc[bottom_index, ]
+
+  # 4) Compute rotation matrix to align axis_main → z
+  z_axis <- c(0, 0, 1)
+  v <- pracma::cross(axis_main, z_axis)
+  s <- sqrt(sum(v^2))
+  cval <- sum(axis_main * z_axis)
+  Vx <- matrix(c(0, -v[3], v[2],
+                 v[3], 0, -v[1],
+                 -v[2], v[1], 0), nrow = 3, byrow = TRUE)
+  R <- if (s > 1e-8) diag(3) + Vx + (Vx %*% Vx) * ((1 - cval) / (s^2)) else diag(3)
+
+  # 5) Apply transform
+  pc_centered <- sweep(pc[, c("x","y","z")], 2, as.numeric(bottom_point))
+  pc_rotated <- as.matrix(pc_centered) %*% R
+  colnames(pc_rotated) <- c("x","y","z")
+  pc_rotated[, "z"] <- pc_rotated[, "z"] - min(pc_rotated[, "z"], na.rm = TRUE)
+
+  # 6) Sanity check — if butt ends up higher than top, flip
+  bottom_mask <- cuts == bottom_section_idx
+  mean_z_bottom <- mean(pc_rotated[which(bottom_mask), "z"], na.rm = TRUE)
+  mean_z_top <- mean(pc_rotated[which(!bottom_mask & !is.na(cuts)), "z"], na.rm = TRUE)
+  if (is.finite(mean_z_bottom) && is.finite(mean_z_top) && mean_z_bottom > mean_z_top) {
+    axis_main <- -axis_main
+    v <- pracma::cross(axis_main, z_axis)
+    s <- sqrt(sum(v^2))
+    cval <- sum(axis_main * z_axis)
+    Vx <- matrix(c(0, -v[3], v[2],
+                   v[3], 0, -v[1],
+                   -v[2], v[1], 0), nrow = 3, byrow = TRUE)
+    R <- if (s > 1e-8) diag(3) + Vx + (Vx %*% Vx) * ((1 - cval) / (s^2)) else diag(3)
+    pc_centered <- sweep(pc[, c("x","y","z")], 2, as.numeric(bottom_point))
+    pc_rotated  <- as.matrix(pc_centered) %*% R
+    colnames(pc_rotated) <- c("x","y","z")
+    pc_rotated[, "z"] <- pc_rotated[, "z"] - min(pc_rotated[, "z"], na.rm = TRUE)
+  }
+
+  
+  ## Export uprighted trunk
+  folder.path <- sapply(stringr::str_split(files.trunk.downed[i], "/"),head,  -2) |>
+  paste(collapse = "/")
+
+
+  output.name <- paste0(folder.path, "/Uprighted_Trees/", tree.ID[i+1], "_trunk_downed_upright.csv")
+
+  # write.csv(pc_rotated, output.name)
+  write.table(pc_rotated,
+            file = output.name,
+            sep = " ",
+            row.names = FALSE,
+            col.names = FALSE,
+            quote = FALSE)
+  
+  paste("Uprighted and exported:", i, output.name)
+  
+  open3d()
+  points3d(pc_rotated, color = "brown", size = 3)
+  
+  # # render as HTML widget (inline)
+  # rglwidget()
+
+}
+
+```
+
+
+```{r}
+# for (i in 1:2){
+#   upright.tree(i)
+# }
+
+for (i in 1:length(files.trunk.downed)){
+  upright.tree(i)
+}
+```

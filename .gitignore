@@ -1,0 +1,23 @@
+# --------------------
+# Data directory
+# --------------------
+
+# Ignore everything inside Data
+/Data/*
+
+# But keep the Data directory itself
+!/Data/.gitkeep
+
+# --------------------
+# R-specific
+# --------------------
+.Rhistory
+.RData
+.Rproj.user/
+
+# --------------------
+# OS / temp files
+# --------------------
+.DS_Store
+Thumbs.db
+*.log

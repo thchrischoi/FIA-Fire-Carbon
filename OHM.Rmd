@@ -1,0 +1,649 @@
+---
+title: "OHM test"
+author: "Christopher Tsz Hin Choi"
+date: "2024-03-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# install.packages(c('circular', 'lidR', 'viridis', 'rgl', 'fpc', 'VoxR'))
+
+# require(circular)
+# require(lidR)
+# require(viridis)
+# require(rgl)
+# require(fpc)
+```
+
+```{r}
+library(circular)
+library(lidR)
+library(viridis)
+# library(rgl)
+library(fpc)
+library(VoxR)
+library(dplyr)
+library(stringr)
+library(DBI)
+library(RSQLite)
+# devtools::install_github("lmterryn/ITSMe", build_vignettes = TRUE)
+# library(ITSMe)
+```
+###Source OHM functions
+```{r}
+source("OHM-master/R/2024_OHM_FUN.R")
+
+```
+
+###Data
+```{r}
+## point to TLS data
+files.trunk <- list.files("Data/TLS_Scans/Trees/All_Standing_Trees", pattern="trunk.csv", full.names = TRUE, recursive=TRUE)
+
+files.branch <- list.files("Data/TLS_Scans/Trees/All_Standing_Trees", pattern="branch.csv", full.names = TRUE, recursive=TRUE)
+
+tree.ID <- list.dirs("Data/TLS_Scans/Trees/All_Standing_Trees", full.names = FALSE)
+##################
+# #Making a dataframe of files for the tree components
+# combine.files<-function(treeID, trunk, branch) {
+#   treeID = tree.ID[-1]
+# 
+# 
+#   plot.ID <- data.frame(ID = tree.ID[-1])
+# 
+#   trunk.tree.ID <- data.frame(trunk.filename = files.trunk,
+#                               ID = t(data.frame(ID = strsplit(files.trunk,  split = c('/')))[2,])) |>
+#     setNames(c('trunk.filename', 'ID'))
+# 
+#   branch.tree.ID <- data.frame(branch.filename = files.branch,
+#                                ID = t(data.frame(ID = strsplit(files.branch,  split = c('/')))[2,])) |>
+#     setNames(c('branch.filename', 'ID'))
+# 
+# 
+#   data = merge(plot.ID, trunk.tree.ID, by = 'ID')
+# 
+#   data2 = merge(data, branch.tree.ID, by = 'ID', all.x = T)
+# 
+# 
+#   data = merge(plot.ID, trunk.tree.ID, by = 'ID') |>
+#     dplyr::left_join(branch.tree.ID, by = 'ID')
+# 
+#   data = dplyr::full_join(plot.ID, branch.tree.ID)
+# 
+# 
+#   ###############3
+#   long_df <- reshape(df, direction = "long",
+#         varying = which(!names(df) %in% c("A", "B")),
+#         v.names = "value",
+#         timevar = "year",
+#         times = names(df)[!(names(df) %in% c("A", "B"))],
+#         ids = NULL,
+#         new.row.names = 1:(length(which(!names(df) %in% c("A", "B"))) * nrow(df)))
+# 
+# 
+#   for(i in tree.ID){
+#     print(i)
+#   }
+# 
+#   trunk.tree.ID = list()
+# 
+#   for(i in files.trunk){
+#     trunk.tree.ID.2 = c(trunk.tree.ID, substr(i, '_'))
+#   }
+# 
+# 
+#   tree.ID.df<- data.frame(treeID = tree.ID,
+#                           trunk = files.trunk)
+# 
+# }
+# 
+###################
+
+# REF_SPECIES table
+REF_SPECIES <- read.csv('Data/FIADB_REFERENCE/REF_SPECIES.csv')
+
+
+
+######################################################
+## SQLITE database
+######################################################
+
+#database path
+sqlite_path <- file.path('Data/SQLite_FIADB_CO/SQLite_FIADB_CO.db')
+
+## connection to db
+conn <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+
+DBI::dbListTables(conn)
+# DBI::dbListFields(conn, 'TREE')
+
+
+## Tree table
+######################################################
+TREE <- DBI::dbReadTable(conn, "TREE")
+
+
+## Disconnect from db
+DBI::dbDisconnect(conn)
+```
+
+```{r}
+files<-data.frame(treeID=tree.ID[-1],
+                  trunk=files.trunk,
+                  branch=files.branch)
+
+```
+
+```{r}
+#Read in TLS data
+ohm.files<-read.csv.ohm.input(files[4,])
+
+#We can split the files into trunk and biomass elements
+trunk <- ohm.files[[1]]
+branch <- ohm.files[[2]]
+
+```
+
+
+### Test
+```{r}
+ohm.biomass <- function(files, verbose = TRUE) {
+
+  output.table <- data.frame(
+    treeID = character(),
+    trunk  = double(),
+    branch = double(),
+    total  = double(),
+    z      = double(),
+    dbh    = double(),
+    stringsAsFactors = FALSE
+  )
+
+  failed <- list()
+
+  for (i in seq_len(nrow(files))) {
+
+    tree_id <- files$treeID[i]
+
+    if (verbose) {
+      message(sprintf("[START] (%d/%d) %s", i, nrow(files), tree_id))
+    }
+
+    result <- tryCatch({
+
+      ohm.files <- read.csv.ohm.input(files[i, ])
+
+      trunk  <- ohm.files[[1]]
+      branch <- ohm.files[[2]]
+
+      OHM.output <- OHM.tree(
+        trunk = trunk,
+        branch = branch,
+        sg = 0.4,
+        interval = 0.1, buff = 0.1, outlier_pct = 20,
+        vox.res = 0.1, vol.correction = 1
+      )
+
+      ## Clean placeholder biomass
+      if (OHM.output$biomass$trunk < 0.3) {
+        OHM.output$biomass$trunk <- 0
+      }
+      if (OHM.output$biomass$branch < 0.1) {
+        OHM.output$biomass$branch <- 0
+      }
+
+      total_biomass <- OHM.output$biomass$trunk +
+                       OHM.output$biomass$branch
+
+      ## Height
+      fits_all <- OHM.output$all.circle.fits
+      fits_all$z <- fits_all$z - min(fits_all$z, na.rm = TRUE)
+
+      height <- ifelse(max(fits_all$z, na.rm = TRUE) > 0.1,
+                       max(fits_all$z, na.rm = TRUE),
+                       0)
+
+      ## DBH
+      fits_filt <- OHM.output$filtered.circle.fits
+      fits_filt$z <- fits_filt$z - min(fits_filt$z, na.rm = TRUE)
+
+      dbh <- 0
+      if (max(fits_filt$z, na.rm = TRUE) >= 1.2) {
+        idx <- which.min(abs(fits_filt$z - 1.2))
+        dbh <- fits_filt$r[idx] * 2
+      }
+
+      data.frame(
+        treeID = tree_id,
+        trunk  = OHM.output$biomass$trunk,
+        branch = OHM.output$biomass$branch,
+        total  = total_biomass,
+        z      = height,
+        dbh    = dbh,
+        stringsAsFactors = FALSE
+      )
+
+    }, error = function(e) {
+
+      failed[[tree_id]] <<- e$message
+
+      if (verbose) {
+        message(sprintf("[FAIL] %s :: %s", tree_id, e$message))
+      }
+
+      NULL
+    })
+
+    if (!is.null(result)) {
+      output.table <- rbind(output.table, result)
+      if (verbose) message(sprintf("[DONE] %s", tree_id))
+    }
+  }
+
+  if (length(failed) > 0 && verbose) {
+    message("---- Failed trees ----")
+    print(names(failed))
+  }
+
+  attr(output.table, "failed") <- failed
+  output.table
+}
+
+
+TLS.biomass <- ohm.biomass(files)
+```
+
+```{r}
+ohm.biomass <- function(files){
+  
+  ## Final structure of output table
+  output.table = data.frame(treeID = character(),
+                             trunk = double(),
+                             branch = double(),
+                             total = double(),
+                             z = double(),
+                             dbh = double() #DBH
+                             )
+  
+  
+  
+  # for (i in 91:nrow(files)){
+  for (i in 1:nrow(files)){
+    
+    ## dbh
+    filtered.fitted.circles.table = data.frame(dbh = double())    
+    
+    ## tree height
+    height.table = data.frame(z = double())
+    
+    ohm.files<-read.csv.ohm.input(files[i,])
+    
+    #We can split the files into trunk and biomass elements
+    trunk <- ohm.files[[1]]
+    branch <- ohm.files[[2]]
+    
+    
+    OHM.output<-OHM.tree(trunk = trunk,
+                     branch = branch,
+                     sg=0.4,
+                     interval = 0.1, buff = 0.1, outlier_pct = 20,
+                     vox.res=0.1, vol.correction=1)
+    
+    ## Tree ID
+    treeID.table = data.frame(treeID = files[i,]$treeID)
+    
+    ## Reduce biomass less than 1 to 0 since it is placeholder data
+    if(OHM.output$biomass$trunk < 0.3){
+      OHM.output$biomass$trunk = 0
+       OHM.output$trunk.volume$vol = 0
+    }
+    if(OHM.output$biomass$branch < 0.1){
+      OHM.output$biomass$branch = 0
+      OHM.output$branch.volume$z = 0
+    }
+    
+    OHM.output$biomass$total = OHM.output$biomass$trunk + OHM.output$biomass$branch
+    
+    
+    ## Find tree height
+    
+    ## Correct tree height so that circles fit start at 0
+    OHM.output$filtered.circle.fits$z = OHM.output$filtered.circle.fits$z - min(OHM.output$filtered.circle.fits$z)
+    OHM.output$all.circle.fits$z = OHM.output$all.circle.fits$z - min(OHM.output$all.circle.fits$z)
+    
+    if (max(OHM.output$all.circle.fits$z) > 0.1){
+      height.table = rbind(height.table, max(OHM.output$all.circle.fits$z))
+      
+      names(height.table) = 'z'
+      
+    } else if (max(OHM.output$all.circle.fits$z) <= 0.1){
+      height.table = rbind(height.table, data.frame(z = c(0)))
+      
+      names(height.table) = 'z'
+    }
+    
+     
+    
+    ## Find dbh
+    
+    ## find the closest row to the target height of 1.2 (this is in case a circle fit is not performed for 1.2)
+    target.height <- 1.2
+    closest.row <- OHM.output$filtered.circle.fits[which.min(abs(OHM.output$filtered.circle.fits$z - target.height)), ]
+    final.height = closest.row$z
+    
+    if(max(OHM.output$filtered.circle.fits$z) >= 1.2){
+      
+      # print('T1')
+      
+      filtered.fitted.circles.table = rbind(filtered.fitted.circles.table, OHM.output$filtered.circle.fits) |>
+        dplyr::filter(z == final.height) |> # 1.2m = 4.5ft = dbh
+        dplyr::transmute(dbh = dplyr::coalesce(r,0, na.rm = T)*2) # radius * 2 == diameter
+      
+      
+    } else if (max(OHM.output$filtered.circle.fits$z) < final.height){
+      # print('T2')
+      filtered.fitted.circles.table = rbind(filtered.fitted.circles.table, data.frame(dbh = c(0)))
+      
+    }
+    
+    
+    
+    
+    output.table = rbind(output.table, cbind(treeID.table, # treeID
+                                             OHM.output$biomass, #  biomass
+                                             height.table, # Tree height
+                                             
+                                             filtered.fitted.circles.table # dbh
+                                             ))
+    
+    paste(treeID.table, 'completed')
+    
+    
+  }
+  
+  return(output.table)
+  
+}
+
+
+
+TLS.biomass <- ohm.biomass(files)
+
+
+
+
+
+```
+
+
+```{r}
+## Add plot and tree reference numbers
+TLS.biomass2 <- TLS.biomass |>
+  dplyr::mutate(STATECD = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_49_37_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_38_04", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_49_66_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_66_02", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_49_83_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_83_02", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_83_03", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_83_04", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_69_104_01", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_69_3023_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_69_3023_04", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    (grepl("8_69_3031_02", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    .default = NA
+                                    ),
+                
+                COUNTYCD = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 49,
+                                    
+                                    (grepl("8_49_37_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 49,
+                                    
+                                    (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_38_04", treeID, fixed = T)) == T ~ 49,
+                                    
+                                    (grepl("8_49_66_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_66_02", treeID, fixed = T)) == T ~ 49,
+                                    
+                                    (grepl("8_49_83_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_83_02", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_83_03", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_83_04", treeID, fixed = T)) == T ~ 49,
+                                    
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 57,
+                                    
+                                    (grepl("8_69_104_01", treeID, fixed = T)) == T ~ 69,
+                                    
+                                    (grepl("8_69_3023_01", treeID, fixed = T)) == T ~ 69,
+                                    (grepl("8_69_3023_04", treeID, fixed = T)) == T ~ 69,
+                                    
+                                    (grepl("8_69_3031_02", treeID, fixed = T)) == T ~ 69,
+                                    
+                                    .default = NA
+                                    ),
+                
+                PLOT = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 20,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 20,
+                                    
+                                    (grepl("8_49_37_01", treeID, fixed = T)) == T ~ 37,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 37,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 37,
+                                    
+                                    (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 38,
+                                    (grepl("8_49_38_04", treeID, fixed = T)) == T ~ 38,
+                                    
+                                    (grepl("8_49_66_01", treeID, fixed = T)) == T ~ 66,
+                                    (grepl("8_49_66_02", treeID, fixed = T)) == T ~ 66,
+                                 
+                                    (grepl("8_49_83_01", treeID, fixed = T)) == T ~ 83,
+                                    (grepl("8_49_83_02", treeID, fixed = T)) == T ~ 83,
+                                    (grepl("8_49_83_03", treeID, fixed = T)) == T ~ 83,
+                                    (grepl("8_49_83_04", treeID, fixed = T)) == T ~ 83,
+                                 
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 3001,
+                                 
+                                    (grepl("8_69_104_01", treeID, fixed = T)) == T ~ 104,
+                                 
+                                    (grepl("8_69_3023_01", treeID, fixed = T)) == T ~ 3023,
+                                    (grepl("8_69_3023_04", treeID, fixed = T)) == T ~ 3023,
+                                    
+                                    (grepl("8_69_3031_02", treeID, fixed = T)) == T ~ 3031,
+                                 
+                                    .default = NA),
+                SUBP = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 4,
+                                    
+                                    (grepl("8_49_37_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 2,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 3,
+                                    
+                                    (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_49_38_04", treeID, fixed = T)) == T ~ 4,
+                                    
+                                    (grepl("8_49_66_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_49_66_02", treeID, fixed = T)) == T ~ 2,
+                                 
+                                    (grepl("8_49_83_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_49_83_02", treeID, fixed = T)) == T ~ 2,
+                                    (grepl("8_49_83_03", treeID, fixed = T)) == T ~ 3,
+                                    (grepl("8_49_83_04", treeID, fixed = T)) == T ~ 4,
+                                 
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 1,
+                                 
+                                    (grepl("8_69_104_01", treeID, fixed = T)) == T ~ 1,
+                                 
+                                    (grepl("8_69_3023_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_69_3023_04", treeID, fixed = T)) == T ~ 4,
+                                    
+                                    (grepl("8_69_3031_02", treeID, fixed = T)) == T ~ 2,
+                                 
+                                    .default = NA),
+                
+                TREE = as.numeric(stringr::str_sub(treeID, -2, -1))
+
+  )
+
+# TLS.biomass2
+
+head(TLS.biomass2)
+```
+
+```{r}
+TLS.carbon <- TLS.biomass2 |>
+  ## Convert confidential plot numbers to public numbers for joining with TREE table
+  dplyr::mutate(PLOT = dplyr::case_when(PLOT == 3023 ~ 82897,
+                                             PLOT == 3001 ~ 82199,
+                                             PLOT == 149 ~ 85498,
+                                             PLOT == 104 ~ 87545,
+                                             PLOT == 3031 ~ 90710,
+                                             PLOT == 83 ~ 88772,
+                                             PLOT == 66 ~ 84364,
+                                             PLOT == 38 ~ 87154,
+                                             PLOT == 37 ~ 91181,
+                                             PLOT == 20 ~ 87420,
+                                             PLOT == 3040 ~ 80171)) |>
+  ## Add SPCD from TREE table
+  dplyr::left_join(TREE |> dplyr::filter(INVYR > 2008) |> dplyr::select(STATECD, 
+                                                                        COUNTYCD, 
+                                                                        PLOT, 
+                                                                        SUBP, 
+                                                                        TREE, 
+                                                                        # CONDID,
+                                                                        STATUSCD,
+                                                                        PREV_STATUS_CD,
+                                                                        SPCD,
+                                                                        DIA,
+                                                                        PREVDIA,
+                                                                        ACTUALHT,
+                                                                        AGENTCD,
+                                                                        CULL,
+                                                                        DECAYCD,
+                                                                        TOTAGE,
+                                                                        TPA_UNADJ,
+                                                                        DRYBIO_BOLE,
+                                                                        DRYBIO_STUMP,
+                                                                        DRYBIO_BG,
+                                                                        CARBON_AG,
+                                                                        CARBON_BG
+                                                                        ) 
+                   , by = c('STATECD', 'COUNTYCD', 'PLOT', 'SUBP', 'TREE')) |>
+  ## Join with REF_SPECIES table for species specific carbon values
+  dplyr::left_join(REF_SPECIES, by = 'SPCD') |>
+  dplyr::mutate(CARBON_AG = dplyr::if_else(is.na(CARBON_RATIO_LIVE) == F, 
+                                           total * CARBON_RATIO_LIVE,
+                                           total * 0.5))
+  
+  # dplyr::mutate(CARBON_AG = dplyr::case_when(is.na(CARBON_RATIO_LIVE) == F) ~ total* CARBON_RATIO_LIVE,
+  #               .default = total * 0.5)
+
+TLS.carbon
+```
+
+
+Output data
+```{r}
+write.csv(TLS.carbon, paste0('Data/TLS_Carbon_', Sys.Date(), '.csv'))
+
+```
+
+
+
+
+
+######################################################################################################################
+######################################################################################################################
+
+
+
+
+
+
+## Visualize trees
+```{r}
+# 
+# # Plot
+# plot3d( 
+#   x=trunk$X, y=trunk$Y, z=trunk$Z, 
+#   col = 'black', 
+#   type = 's', 
+#   radius = .1,
+#   xlab="X", ylab="Y", zlab="Z")
+
+
+```
+
+
+## Estimate Tree Volume and Biomass with OHM
+```{r}
+OHM.output<-OHM.tree(trunk = trunk,
+                     branch = branch,
+                     sg=0.4,
+                     interval = 0.1, buff = 0.1, outlier_pct = 20,
+                     vox.res=0.1, vol.correction=1)
+
+```
+
+
+## Checking outputs
+
+###Trunk Radius fit
+```{r}
+#Look at the trunk radius fits
+plot(OHM.output$all.circle.fits$r, OHM.output$all.circle.fits$z, col="grey", main='Trunk Radius Fits',
+     ylab='Height (m)', xlab= "Radius (m)")
+lines(OHM.output$filtered.circle.fits$r, OHM.output$filtered.circle.fits$z, col="forestgreen")
+
+```
+
+
+### Cumulatve component biomass
+```{r}
+plot(OHM.output$trunk.volume$z, cumsum(OHM.output$trunk.volume$vol), col="white", xlab='Height (m)', ylab= "Volume (m^3)", 
+     main="Cumulative Tree /n Component Volume",
+     sub = "(brown = trunk; green = crown)")
+lines(OHM.output$trunk.volume$z, cumsum(OHM.output$trunk.volume$vol), col="brown")
+lines(OHM.output$branch.volume$z, cumsum(OHM.output$branch.volume$vol.log), col="forestgreen")
+
+```
+
+## Biomass
+```{r}
+print(paste("Total tree biomass estimate is",
+            OHM.output$biomass[3]
+))
+print(paste("Trunk tree biomass estimate is",
+            OHM.output$biomass[1]
+))
+print(paste("Branch tree biomass estimate is",
+            OHM.output$biomass[2]
+))
+
+```
+0.000125663706143592
+
+```{r}
+max(OHM.output$filtered.circle.fits[,1])
+OHM.output$filtered.circle.fits[,1]
+```

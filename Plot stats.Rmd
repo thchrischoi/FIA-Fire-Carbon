@@ -1,0 +1,128 @@
+---
+title: "Plot stats"
+author: "Christopher Tsz Hin Choi"
+date: "2023-09-01"
+output: html_document
+---
+
+## Plot stats.R
+09/01/2023
+
+
+
+### Chrisopher Tsz Hin Choi
+Christopher.Choi@colostate.edu
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+### Packages
+```{r}
+library(rstudioapi)
+library(readxl)
+library(dplyr)
+library(dtplyr)
+library(tidyr)
+library(tidyverse)
+library(doParallel)
+library(foreach)
+library(skimr)
+library(ggplot2)
+```
+
+### Import Tables
+```{r}
+
+######################################################
+## Field Data
+######################################################
+scan.data <- readxl::read_excel('data/FIA_Fire_Carbon.xlsx', sheet = 1)
+
+CBI.data <- readxl::read_excel('data/FIA_Fire_Carbon.xlsx', sheet = 2)
+
+chardepth.data <- readxl::read_excel('data/FIA_Fire_Carbon.xlsx', sheet = 3)
+
+
+######################################################
+## FIAdb
+######################################################
+#database path
+sqlite_path <- file.path('Data/SQLite_FIADB_CO/SQLite_FIADB_CO.db')
+
+## connection to db
+conn <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+
+DBI::dbListTables(conn)
+# DBI::dbListFields(conn, 'TREE')
+
+## Plot
+plot <- DBI::dbReadTable(conn, "PLOT")
+# plot <- plot |> dplyr::rename_at(colnames(plot), .funs = tolower)
+
+
+
+```
+
+
+## CBI Summarization
+```{r}
+(CBI.data)
+
+
+base::paste('There are', nrow(CBI.data), 'CBI plots.')
+
+```
+
+
+```{r}
+CBI.data2 <- CBI.data |>
+  dplyr::mutate(CBI_rounded = ceiling(CBI))
+
+CBI.breakdown <- CBI.data2 |>
+  dplyr::select(CBI, CBI_rounded) |>
+  dplyr::count(CBI_rounded) |>
+  dplyr::mutate(CBI_category = c('low', 'med', 'high'))
+
+
+CBI.breakdown
+```
+
+
+### Char Depth Stats
+
+```{r}
+base::paste('Trees sampled for char depth:', nrow(chardepth.data))
+
+max(chardepth.data$TotalAvg, na.rm =T)
+min(chardepth.data$TotalAvg, na.rm =T)
+mean(chardepth.data$TotalAvg, na.rm =T)
+
+
+```
+
+
+
+## Plot type analysis
+
+```{r}
+plot|>colnames()
+
+plot |>
+  dplyr::select(STATECD, UNITCD, COUNTYCD, PLOT) |>
+  head()
+
+
+plot2 <- plot|>
+  dplyr::filter(COUNTYCD == 49) |>
+  dplyr::arrange(PLOT)
+
+plot2
+
+```
+
+
+

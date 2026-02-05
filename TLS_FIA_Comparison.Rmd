@@ -1,0 +1,290 @@
+---
+title: "TLS_FIA_Comparison"
+author: "Christopher Tsz Hin Choi"
+date: "2024-09-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+
+```
+
+Datasets
+```{r}
+TLS.carbon = read.csv('Data/TLS_Carbon_20250514.csv', header = T)
+
+# TLS.biomass = read.csv('Data/TLS_Biomass.csv', header = T)
+
+TLS.downed.carbon = read.csv('Data/TLS_Carbon_Downed_20251026.csv', header = T)
+
+Time2Carbon = read.csv('Data/Time2Carbon.csv', header = T)
+
+
+
+```
+
+
+
+```{r}
+head(TLS.carbon)
+
+# head(TLS.biomass)
+
+head(Time2Carbon)
+```
+
+
+
+
+Join datasets
+```{r}
+combined <- dplyr::full_join(TLS.carbon |> 
+                               dplyr::rename(CARBON_AG_TLS = CARBON_AG), 
+                             Time2Carbon |> 
+                               dplyr::rename(CARBON_AG_FIA = CARBON_AG) |>
+                               dplyr::mutate(PLOT = dplyr::case_when(
+                                             PLOT == 3023 ~ 82897,
+                                             PLOT == 3001 ~ 82199,
+                                             PLOT == 149 ~ 85498,
+                                             PLOT == 104 ~ 87545,
+                                             PLOT == 3031 ~ 90710,
+                                             PLOT == 83 ~ 88772,
+                                             PLOT == 66 ~ 84364,
+                                             PLOT == 38 ~ 87154,
+                                             PLOT == 37 ~ 91181,
+                                             PLOT == 20 ~ 87420,
+                                             PLOT == 3040 ~ 80171)
+                                             ), 
+                             by = c('STATECD', 'COUNTYCD', 'PLOT', 'SUBP', 'TREE'))
+
+```
+
+
+DIA and HT plots
+```{r}
+## DIA plot
+ggplot(data = combined) +
+  geom_point(aes(x = dbh *100, y = DIA * 2.54)) +
+  geom_smooth(aes(x = dbh*100, y = DIA * 2.54 ),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  ggpubr::stat_cor(aes(x = dbh*100, y = DIA * 2.54), label.y = 32, color = '#C00000') +
+  ggpubr::stat_regline_equation(aes(x = dbh*100, y = DIA * 2.54 ), label.y = 35, color = '#C00000') +
+  
+  xlab('TLS DBH (cm)') +
+  ylab('FIA DBH (cm)') + 
+  
+  ylim(0,40) +
+  xlim(0,40) +
+
+  theme_minimal()
+
+# ggsave('Figures/20250514_TLS_v_FIA_DBH.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+ggplot(data = combined) +
+  geom_point(aes(x = dbh *100, y = DIA * 2.54, color = as.factor(STATUSCD)), alpha = 0.7) +
+  scale_colour_manual(values=c("#115e00", "#E69F00", "#666666")) +
+  geom_smooth(aes(x = dbh*100, y = DIA * 2.54 ),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  stat_cor(aes(x = dbh*100, y = DIA * 2.54), label.y = 32, color = '#C00000') +
+  stat_regline_equation(aes(x = dbh*100, y = DIA * 2.54 ), label.y = 35, color = '#C00000') +
+  
+  xlab('TLS DBH (cm)') +
+  ylab('FIA DBH (cm)') + 
+  
+  ylim(0,40) +
+  xlim(0,40) +
+
+  theme_minimal()
+
+ggsave('Figures/20250514_TLS_v_FIA_DBH_Categorised.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+## HT plot
+
+# ggplot(data = combined) +
+#   geom_boxplot(aes(x = z))
+
+
+ggplot(data = combined) +
+  geom_point(aes(x = z, y = HT/3.28084)) +
+  geom_smooth(aes(x = z, y = HT/3.28084),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  stat_cor(aes(x = z, y = HT/3.28084), label.y = 20, color = '#C00000') +
+  stat_regline_equation(aes(x = z, y = HT/3.28084), label.y = 23, color = '#C00000') +
+  
+  xlab('TLS Tree Height (m)') +
+  ylab('FIA Tree Height (m)') + 
+  
+  ylim(0,25) +
+  xlim(0,25) +
+  theme_minimal()
+
+# ggsave('Figures/20250514_TLS_v_FIA_HT.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+ggplot(data = combined) +
+  geom_point(aes(x = z, y = HT/3.28084, color = as.factor(STATUSCD)), alpha = 0.7) +
+  scale_colour_manual(values=c("#115e00", "#E69F00", "#666666")) +
+  geom_smooth(aes(x = z, y = HT/3.28084),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  stat_cor(aes(x = z, y = HT/3.28084), label.y = 20, color = '#C00000') +
+  stat_regline_equation(aes(x = z, y = HT/3.28084), label.y = 23, color = '#C00000') +
+  
+  xlab('TLS Tree Height (m)') +
+  ylab('FIA Tree Height (m)') + 
+  
+  ylim(0,25) +
+  xlim(0,25) +
+  theme_minimal()
+
+# ggsave('Figures/20250514_TLS_v_FIA_HT_Categorised.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+```
+
+
+Carbon Plot
+```{r}
+## Carbon plot
+ggplot(data = combined) +
+# ggplot(data = combined |> dplyr::filter(CARBON_AG_TLS < 600)) + # remove potential outlier
+  geom_point(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592)) +
+  geom_smooth(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  stat_cor(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), label.y = 500, color = '#C00000') +
+  stat_regline_equation(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), label.y = 550, color = '#C00000') +
+  
+  # geom_point(data = combined |> dplyr::filter(CARBON_AG_TLS > 600), aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), color = 'azure4') +
+  
+  xlab('TLS Aboveground Carbon (kg)') +
+  ylab('FIA Aboveground Carbon (kg)') + 
+  
+  ylim(0,650) +
+  xlim(0,650) +
+  theme_minimal()
+
+# ## Carbon plot
+# ggplot(data = combined) +
+#   geom_point(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592)) +
+#   geom_smooth(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592),method='lm', formula= y~x, se = FALSE) +  
+#   geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 2) +
+#   stat_cor(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), label.y = 500) +
+#   stat_regline_equation(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), label.y = 550) +
+#   
+#   xlab('TLS Aboveground Carbon (kg)') +
+#   ylab('FIA Aboveground Carbon (kg)') + 
+#   
+#   ylim(0,700) +
+#   xlim(0,700) +
+#   theme_minimal()
+
+
+
+# ggsave('Figures/20250514_TLS_v_FIA_Carbon.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+## Carbon plot
+ggplot(data = combined) +
+# ggplot(data = combined |> dplyr::filter(CARBON_AG_TLS < 600)) + # remove potential outlier
+  geom_point(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592, color = as.factor(STATUSCD), alpha = 0.7)) +
+  scale_colour_manual(values=c("#115e00", "#E69F00", "#666666")) +
+  geom_smooth(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  stat_cor(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), label.y = 500, color = '#C00000') +
+  stat_regline_equation(aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), label.y = 550, color = '#C00000') +
+  
+  # geom_point(data = combined |> dplyr::filter(CARBON_AG_TLS > 600), aes(x = CARBON_AG_TLS, y = CARBON_AG_FIA * 0.453592), color = 'azure4') +
+  
+  xlab('TLS Aboveground Carbon (kg)') +
+  ylab('FIA Aboveground Carbon (kg)') + 
+  
+  ylim(0,650) +
+  xlim(0,650) +
+  theme_minimal()
+
+# ggsave('Figures/20250514_TLS_v_FIA_Carbon_Categorised.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+# /2.20462
+```
+
+
+
+
+
+
+## Downed Trees Analysis
+
+
+### Carbon of downed trees
+```{r}
+
+standing.carbon.per.plot = combined |>
+  dplyr::filter(is.na(CARBON_AG_TLS) == F) |>
+  dplyr::group_by(STATECD, COUNTYCD, PLOT, SUBP) |>
+  dplyr::summarise(standing_count = n(),
+                   standing_carbon_ag_TLS = sum(CARBON_AG_TLS))
+
+downed.carbon.per.plot = TLS.downed.carbon |>
+  dplyr::group_by(STATECD, COUNTYCD, PLOT, SUBP) |>
+  dplyr::summarise(downed_count = n(),
+                   downed_carbon_ag_TLS = sum(CARBON_AG)) 
+
+TLS.carbon.per.plot = dplyr::full_join(standing.carbon.per.plot, downed.carbon.per.plot, by = c('STATECD', 'COUNTYCD', 'PLOT', 'SUBP')) |>
+  dplyr::mutate(downed_count = dplyr::coalesce(downed_count, 0, na.rm = T),
+                downed_carbon_ag_TLS = dplyr::coalesce(downed_carbon_ag_TLS, 0, na.rm = T)) |>
+  dplyr::mutate(downed_count_prop = downed_count/(downed_count + standing_count),
+                downed_carbon_prop = downed_carbon_ag_TLS/(downed_carbon_ag_TLS + standing_carbon_ag_TLS))
+
+
+TLS.carbon.per.plot
+
+
+
+ggplot(TLS.carbon.per.plot) +
+  geom_boxplot(aes(y = downed_carbon_prop * 100), color = '#C00000') +
+  # geom_abline(intercept = 0, slope = 0, color = '#666666', linetype = 2) +
+  xlab('Subplots with Downed Trees') +
+  ylab('Proportion of Downed Tree Carbon (%)') +
+  ylim(c(0,100)) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),
+        axis.tick.x = element_blank(),
+        panel.background = element_rect(fill = "transparent", color = NA),
+        plot.background = element_rect(fill = "transparent", color = NA))
+
+ggsave(paste0('Figures/Downed_Tree_Carbon_Proportion_', Sys.Date(),'.png'), dpi = 300, height = 4.5, width = 3, unit = 'in')
+
+```
+
+
+What pre-fire decay class were trees that were downed
+```{r}
+downed.origin <- TLS.downed.carbon |>
+  dplyr::left_join(TREE |> dplyr::filter(INVYR > 2010), by = c('PLOT', 'SUBP', 'TREE')) |>
+  dplyr::select(PLOT, SUBP, TREE, STATUSCD, DECAYCD) |>
+  dplyr::group_by(DECAYCD) |>
+  dplyr::summarise(count = dplyr::n())
+
+downed.origin
+```
+
+Comparing 6 trees that used raserization technique vs those uprighted and using OHM
+```{r}
+## Rasterized downed trees
+TLS.downed.carbon.rasterized = read.csv('Data/TLS_Carbon_Downed_20241121.csv', header = T)
+
+raster.OHM.joined = TLS.downed.carbon.rasterized |>
+  dplyr::transmute(COUNTYCD, PLOT, SUBP, TREE, CARBON_AG_Raster = CARBON_AG) |>
+  dplyr::left_join(TLS.downed.carbon |>
+                     dplyr::transmute(COUNTYCD, PLOT, SUBP, TREE, CARBON_AG_OHM = CARBON_AG), 
+                   by = c("COUNTYCD", "PLOT", "SUBP", "TREE"))
+
+raster.OHM.joined
+```

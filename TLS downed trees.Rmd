@@ -1,0 +1,339 @@
+---
+title: "TLS Downed trees"
+author: "Christopher Tsz Hin Choi"
+date: "2024-11-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(rgl.useNULL = TRUE)
+
+```
+
+
+```{r}
+library(terra)
+library(pracma)   # for cross(), dot(), rotationMatrix()
+library(rgl)      # for visualization (optional)
+library(stringr)
+```
+
+###Data
+```{r}
+## point to TLS data
+files.trunk.downed <- list.files("Data/TLS_Scans/Trees/All_Downed_Trees", pattern="trunk_downed.csv", full.names = TRUE, recursive=TRUE)
+
+files.branch.downed <- list.files("Data/TLS_Scans/Trees/All_Downed_Trees", pattern="branch_downed.csv", full.names = TRUE, recursive=TRUE)
+
+
+tree.ID <- list.dirs("Data/TLS_Scans/Trees/All_Downed_Trees", full.names = FALSE)
+
+
+########################################
+
+# REF_SPECIES table
+REF_SPECIES <- read.csv('Data/FIADB_REFERENCE/REF_SPECIES.csv')
+
+
+
+######################################################
+## SQLITE database
+######################################################
+
+#database path
+sqlite_path <- file.path('Data/SQLite_FIADB_CO/SQLite_FIADB_CO.db')
+
+## connection to db
+conn <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+
+DBI::dbListTables(conn)
+# DBI::dbListFields(conn, 'TREE')
+
+
+## Tree table
+######################################################
+TREE <- DBI::dbReadTable(conn, "TREE")
+
+
+## Disconnect from db
+DBI::dbDisconnect(conn)
+
+```
+
+```{r}
+files<-data.frame(treeID=tree.ID[-1],
+                  trunk.downed=files.trunk.downed)
+
+```
+
+
+## OHM method
+
+
+Upright the trunk
+```{r}
+pc <- read.csv(files.trunk.downed[1], header = F) |>
+  dplyr::transmute(coords = as.character(V1)) |>
+  tidyr::separate(coords, into = c("x", "y", "z", "intensity", "extra"), sep = " ") |>
+  dplyr::mutate(across(everything(), as.numeric))|>
+  dplyr::select(-intensity, -extra)
+
+head(pc) 
+```
+
+## find main axis with PCA
+```{r}
+pca <- prcomp(pc, center = TRUE, scale. = FALSE)
+axis_main <- pca$rotation[,1]  # first principal component (longest axis)
+center <- colMeans(pc)
+```
+
+```{r}
+# Project points onto main axis
+projections <- as.vector((as.matrix(pc - center) %*% axis_main))
+
+section_stats <- pc %>%
+  dplyr::mutate(section = cuts) %>%
+  dplyr::group_by(section) %>%
+  dplyr::summarize(
+    width = max(x) - min(x) + max(y) - min(y),
+    .groups = "drop"
+  )
+
+# # Slice along axis to find cross-section width
+# n_sections <- 20
+# cuts <- cut(projections, breaks = n_sections)
+# section_stats <- pc %>%
+#   dplyr::mutate(section = cuts) %>%
+#   dplyr::group_by(section) %>%
+#   dplyr::summarize(width = mean(dist(rbind(cbind(x, y), cbind(x, y))))) # rough proxy
+
+# # identify section with largest width (butt)
+# bottom_section <- which.max(section_stats$width)
+# bottom_index <- which(cuts == levels(cuts)[bottom_section])
+# bottom_point <- pc[bottom_index[1], ]
+
+bottom_section <- section_stats$section[which.max(section_stats$width)]
+bottom_index <- which(cuts == bottom_section)
+bottom_point <- pc[bottom_index[1], ]
+
+
+z_axis <- c(0, 0, 1)
+v <- pracma::cross(axis_main, z_axis)
+s <- norm(v, type = "2")
+c <- sum(axis_main * z_axis)
+Vx <- matrix(c(0, -v[3], v[2],
+               v[3], 0, -v[1],
+               -v[2], v[1], 0), nrow=3, byrow=TRUE)
+if (s != 0) {
+  R <- diag(3) + Vx + (Vx %*% Vx) * ((1 - c) / (s^2))
+} else {
+  R <- diag(3)  # already aligned
+}
+
+
+## apply transformation
+pc_centered <- sweep(pc, 2, as.numeric(bottom_point))
+pc_rotated <- as.matrix(pc_centered) %*% R
+colnames(pc_rotated) <- c("x", "y", "z")
+
+# optional: ensure bottom is at z=0
+pc_rotated[,3] <- pc_rotated[,3] - min(pc_rotated[,3])
+
+
+```
+
+```{r}
+library(rgl)
+library(rglwidget)
+
+# Example: visualize upright trunk
+open3d()
+points3d(pc_rotated, color = "brown", size = 3)
+
+# render as HTML widget (inline)
+rglwidget()
+
+# ## For .R file (non-markdown)
+# open3d()
+# points3d(pc_rotated, color = "brown", size = 3)
+```
+
+```{r}
+
+```
+
+
+## Raster method
+
+```{r}
+
+raster.biomass <- function(files){
+  
+  ## Final structure of output table
+  output.table = data.frame(treeID = character(),
+                             trunk = double(),
+                             branch = double(),
+                             total = double(),
+                             z = double(),
+                             dbh = double() #DBH
+                             )
+  
+  
+  
+  downed.trunk.biomass = function(trunk){
+    
+    # Specific Gravity (using same that OHM functions use)
+    sg = 0.4
+    
+    # find horizontal resolution and convert ft to m 
+    resolution = terra::res(trunk)[1] / 3.28084 * 100
+    
+    ## remove 0 values
+    
+    ## find minimum of leftover values
+    min.height = terra::minmax(trunk, compute = T)[1,]
+    
+    ## minus all values by the minimum value (new 0) and conver to m
+    calibrated.height = (trunk - min.height) / 3.28084 #*100
+    
+    ## multiply values by resolution x resolution
+    pixel.volume = calibrated.height * (resolution^2)
+    
+    ## sum of pixel volumes
+    total.volume = sum((pixel.volume |> as.data.frame()), na.rm = T)
+    
+    
+    ## convert volume to biomass
+    ## Correcting for extra biomass assuming a cylindrical trunk (~12.1%)
+    total.biomass = total.volume * sg * (pi*(r^2)/(pi*r^2 + 2*r^2 - ((pi*r^2)/2)))
+    
+    return(total.biomass)
+  }
+  
+  
+  
+  for (i in 1:nrow(files)){
+    
+    
+    treeID.table = data.frame(treeID = files[i,]$treeID)
+    
+    trunk = terra::rast(files[i, 2])
+    
+    trunk.biomass = downed.trunk.biomass(trunk)
+    
+    
+    output.table = rbind(output.table,
+                 data.frame(treeID = treeID.table,
+                            trunk = trunk.biomass,
+                            branch = NA,
+                            total = trunk.biomass,
+                            z = NA,
+                            dbh = NA))
+    
+    # output.table = rbind(output.table, cbind(as.data.frame(treeID.table), # treeID
+    #                                          trunk.biomass, #  biomass
+    #                                          # as.data.frame(NA), # branch
+    #                                          trunk.biomass, #total
+    #                                          # as.data.frame(NA), #height.table, # Tree height
+    #                                          
+    #                                          # as.data.frame(NA), #filtered.fitted.circles.table # dbh
+    #                                          ))
+    
+    print(treeID.table, 'completed')
+    
+    
+  }
+  
+  return(output.table)
+  
+  
+}
+
+
+
+TLS.downed.biomass <- raster.biomass(files)
+
+TLS.downed.biomass
+
+```
+
+
+```{r}
+## Add plot and tree reference numbers
+TLS.downed.biomass2 <- TLS.downed.biomass |>
+  dplyr::mutate(STATECD = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 8,
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 8,
+                                    
+                                    .default = NA
+                                    ),
+                
+                COUNTYCD = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 49,
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 57,
+                                    .default = NA
+                                    ),
+                
+                PLOT = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 20,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 20,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 37,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 37,
+                                 (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 38,
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 3001,
+                                    .default = NA),
+                SUBP = case_when((grepl("8_49_20_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_49_20_04", treeID, fixed = T)) == T ~ 4,
+                                    (grepl("8_49_37_02", treeID, fixed = T)) == T ~ 2,
+                                    (grepl("8_49_37_03", treeID, fixed = T)) == T ~ 3,
+                                 (grepl("8_49_38_01", treeID, fixed = T)) == T ~ 1,
+                                    (grepl("8_57_3001_01", treeID, fixed = T)) == T ~ 1,
+                                    .default = NA),
+                
+                TREE = as.numeric(stringr::str_sub(treeID, -2, -1))
+
+  )
+
+
+
+(TLS.downed.biomass2)
+
+```
+
+```{r}
+TLS.downed.carbon <- TLS.downed.biomass2 |>
+  ## Convert confidential plot numbers to public numbers for joining with TREE table
+  dplyr::mutate(PLOT = dplyr::case_when(PLOT == 3023 ~ 82897,
+                                             PLOT == 3001 ~ 82199,
+                                             PLOT == 149 ~ 85498,
+                                             PLOT == 104 ~ 87545,
+                                             PLOT == 3031 ~ 90710,
+                                             PLOT == 83 ~ 88772,
+                                             PLOT == 66 ~ 84364,
+                                             PLOT == 38 ~ 87154,
+                                             PLOT == 37 ~ 91181,
+                                             PLOT == 20 ~ 87420,
+                                             PLOT == 3040 ~ 80171)) |>
+  ## Add SPCD from TREE table
+  dplyr::left_join(TREE |> dplyr::filter(INVYR > 2008) |> dplyr::select(STATECD, COUNTYCD, PLOT, SUBP, TREE, SPCD) , by = c('STATECD', 'COUNTYCD', 'PLOT', 'SUBP', 'TREE')) |>
+  ## Join with REF_SPECIES table for species specific carbon values
+  dplyr::left_join(REF_SPECIES, by = 'SPCD') |>
+  dplyr::mutate(CARBON_AG = dplyr::if_else(is.na(CARBON_RATIO_LIVE) == F, 
+                                           total * CARBON_RATIO_LIVE,
+                                           total * 0.5))
+  
+  # dplyr::mutate(CARBON_AG = dplyr::case_when(is.na(CARBON_RATIO_LIVE) == F) ~ total* CARBON_RATIO_LIVE,
+  #               .default = total * 0.5)
+
+TLS.downed.carbon
+```
+```{r}
+write.csv(TLS.downed.carbon, 'data/TLS_Downed_Carbon.csv')
+```

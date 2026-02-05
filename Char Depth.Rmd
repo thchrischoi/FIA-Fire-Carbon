@@ -1,0 +1,90 @@
+---
+title: "Char Depth Analysis"
+author: "Christopher Tsz Hin Choi"
+date: "2024-12-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(ggpubr)
+```
+
+Data
+```{r}
+
+mCBI = readxl::read_excel('Data/FIA_Fire_Carbon.xlsx', sheet = 2)
+
+char = readxl::read_excel('Data/FIA_Fire_Carbon.xlsx', sheet = 3)
+
+```
+
+
+```{r}
+dat = char |>
+  dplyr::left_join(mCBI, by = 'state_county_plot_subplot')
+
+```
+
+Char Depth Summary
+```{r}
+summary(dat$TotalAvg)
+
+ggplot(dat) +
+  geom_boxplot(aes(y = dat$TotalAvg), color = '#C00000') +
+  xlab('Tree') +
+  ylab('Average Char Depth (mm)') + 
+  theme_minimal()
+
+ggsave('Figures/CharDepth_Summary_boxplot.png', dpi = 300, height = 3, width = 2, unit = 'in')
+
+```
+
+Average char depth of all trees and CBI
+```{r}
+ggplot(dat) +
+  geom_histogram(aes(x = TotalAvg), color = '#C00000', fill = '#FFFFFF', alpha = 0.5, binwidth = 1) +
+  
+  xlab('Average Tree Char Depth (mm)') +
+  ylab('Tree Count') + 
+  theme_minimal()
+
+ggsave('Figures/CharDepth_Histogram.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+ggplot(dat |> dplyr::filter(StandingCode == '1' | StandingCode == '2')) +
+  geom_histogram(aes(x = CBI), color = '#C00000', fill = '#FFFFFF', alpha = 0.5, binwidth = 0.5) +
+  
+  xlab('Standing Tree (Live or Dead) Subplot mCBI') +
+  ylab('Count') + 
+  theme_minimal()
+
+ggsave('Figures/Tree_mCBI_Histogram.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+```
+
+Char depth by burn severity
+```{r}
+ggplot(dat) +
+  geom_point(aes(x = CBI, y = TotalAvg)) +
+  geom_smooth(aes(x = CBI, y = TotalAvg),method='lm', formula= y~x, se = FALSE, color = '#C00000') +  
+  # geom_abline(intercept = 0, slope = 1, color = '#666666', linetype = 2) +
+  stat_cor(aes(x = CBI, y = TotalAvg), label.y = 8, color = '#C00000') +
+  stat_regline_equation(aes(x = CBI, y = TotalAvg), label.y = 8.5, color = '#C00000') +
+  
+  xlab('mCBI') +
+  ylab('Average Tree Char Depth (mm)') + 
+  
+  ylim(0,10) +
+  xlim(0,3) +
+  theme_minimal()
+
+ggsave('Figures/mCBI_Char_Depth_lm.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+```
+

@@ -1,0 +1,544 @@
+---
+title: "Pre- Post-Fire FIA Analysis"
+author: "Christopher Tsz Hin Choi"
+date: "2024-09-01"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# DO NOT DISTRIBUTE THIS SCRIPT
+- This script contains confidential FIA plot numbers - DO NOT DISTRIBUTE
+
+Libraries
+```{r}
+library(dplyr)
+library(forcats)
+
+library(ggplot2)
+library(ggpubr)
+library(ggalluvial)
+library(networkD3)
+library(DBI)
+library(RSQLite)
+```
+
+Import data
+```{r}
+
+######################################################
+## Time 2 Carbon from 2023 sampled plots
+######################################################
+# source('Time 2 Carbon.R')
+Time2Carbon <- read.csv('Data/Time2Carbon.csv', head= T)
+
+######################################################
+## SQLITE database
+######################################################
+
+#database path
+sqlite_path <- file.path('Data/SQLite_FIADB_CO/SQLite_FIADB_CO.db')
+
+## connection to db
+conn <- DBI::dbConnect(RSQLite::SQLite(), sqlite_path)
+
+DBI::dbListTables(conn)
+# DBI::dbListFields(conn, 'TREE')
+
+
+## Tree table
+######################################################
+TREE <- DBI::dbReadTable(conn, "TREE")
+
+
+## Disconnect from db
+DBI::dbDisconnect(conn)
+```
+### Subset Input Data
+
+Attach non-classified plot numbers to post-fire plots
+```{r}
+Time2Carbon2 <- Time2Carbon |>
+  dplyr::mutate(PREV_PLOT = dplyr::case_when(PLOT == 3023 ~ 82897,
+                                             PLOT == 3001 ~ 82199,
+                                             PLOT == 149 ~ 85498,
+                                             PLOT == 104 ~ 87545,
+                                             PLOT == 3031 ~ 90710,
+                                             PLOT == 83 ~ 88772,
+                                             PLOT == 66 ~ 84364,
+                                             PLOT == 38 ~ 87154,
+                                             PLOT == 37 ~ 91181,
+                                             PLOT == 20 ~ 87420,
+                                             PLOT == 3040 ~ 80171)) |>
+  dplyr::filter((PREV_PLOT == 82897 & SUBP == 1) |
+                  (PREV_PLOT == 82897 & SUBP == 4) |
+                  
+                  (PREV_PLOT == 82199 & SUBP == 1) |
+                  (PREV_PLOT == 82199 & SUBP == 2) |
+                  (PREV_PLOT == 82199 & SUBP == 3) |
+                  (PREV_PLOT == 82199 & SUBP == 4) |
+                  
+                  (PREV_PLOT == 85498 & SUBP == 1) |
+                  (PREV_PLOT == 85498 & SUBP == 4) |
+                  
+                  (PREV_PLOT == 87545 & SUBP == 1) |
+                  (PREV_PLOT == 87545 & SUBP == 2) |
+                  (PREV_PLOT == 87545 & SUBP == 3) |
+                  
+                  (PREV_PLOT == 90710 & SUBP == 2) |
+                  
+                  (PREV_PLOT == 88772 & SUBP == 1) |
+                  (PREV_PLOT == 88772 & SUBP == 2) |
+                  (PREV_PLOT == 88772 & SUBP == 3) |
+                  (PREV_PLOT == 88772 & SUBP == 4) |
+                  
+                  (PREV_PLOT == 84364 & SUBP == 1) |
+                  (PREV_PLOT == 84364 & SUBP == 2) |
+                  (PREV_PLOT == 84364 & SUBP == 3) |
+                  
+                  (PREV_PLOT == 87154 & SUBP == 1) |
+                  (PREV_PLOT == 87154 & SUBP == 4) |
+                  
+                  (PREV_PLOT == 91181 & SUBP == 1) |
+                  (PREV_PLOT == 91181 & SUBP == 2) |
+                  (PREV_PLOT == 91181 & SUBP == 3) |
+                  
+                  (PREV_PLOT == 87420 & SUBP == 1) |
+                  (PREV_PLOT == 87420 & SUBP == 4) |
+                  
+                  (PREV_PLOT == 80171 & SUBP == 1)
+                  )
+
+```
+
+
+Subset subplots sampled from FIA database
+```{r}
+TREE2 <- TREE |>
+  dplyr::filter((PLOT == 82897 & SUBP == 1) |
+                  (PLOT == 82897 & SUBP == 4) |
+
+                  (PLOT == 82199 & SUBP == 1) |
+                  (PLOT == 82199 & SUBP == 2) |
+                  (PLOT == 82199 & SUBP == 3) |
+                  (PLOT == 82199 & SUBP == 4) |
+
+                  (PLOT == 85498 & SUBP == 1) |
+                  (PLOT == 85498 & SUBP == 4) |
+
+                  (PLOT == 87545 & SUBP == 1) |
+                  (PLOT == 87545 & SUBP == 2) |
+                  (PLOT == 87545 & SUBP == 3) |
+
+                  (PLOT == 90710 & SUBP == 2) |
+
+                  (PLOT == 88772 & SUBP == 1) |
+                  (PLOT == 88772 & SUBP == 2) |
+                  (PLOT == 88772 & SUBP == 3) |
+                  (PLOT == 88772 & SUBP == 4) |
+
+                  (PLOT == 84364 & SUBP == 1) |
+                  (PLOT == 84364 & SUBP == 2) |
+                  (PLOT == 84364 & SUBP == 3) |
+
+                  (PLOT == 87154 & SUBP == 1) |
+                  (PLOT == 87154 & SUBP == 4) |
+
+                  (PLOT == 91181 & SUBP == 1) |
+                  (PLOT == 91181 & SUBP == 2) |
+                  (PLOT == 91181 & SUBP == 3) |
+
+                  (PLOT == 87420 & SUBP == 1) |
+                  (PLOT == 87420 & SUBP == 4) |
+
+                  (PLOT == 80171 & SUBP == 1)
+                  )|>
+  dplyr::group_by(PLOT, SUBP, TREE) |>
+  dplyr::filter(INVYR == max(INVYR)) |> ## This only keeps the most recent record of a tree being measured, instead of 2 records from 2 panels that makes joining to the time2 data complicated
+  dplyr::ungroup()
+```
+
+
+
+Join records from new carbon to FIA plots
+Filter only plots that we have scanned trees for:
+```{r}
+TreeJoined <- TREE2 |>
+  dplyr::full_join(Time2Carbon2, by = c('PLOT' = 'PREV_PLOT', 'SUBP', 'TREE')) |>
+  dplyr::filter(PLOT == 87420 | # 8_49_20
+                PLOT == 91181 | # 8_49_37
+                PLOT == 87154 | # 8_49_38
+                PLOT == 84364 | # 8_49_66
+                PLOT == 88772 | # 8_49_83
+                PLOT == 82199 | # 8_57_3001
+                PLOT == 87545 | # 8_69_104
+                PLOT == 82897 | # 8_69_3023
+                PLOT == 90710   # 8_69_3031
+                )
+
+TreeJoined |>
+  dplyr::arrange(CARBON_AG.y) |>
+  head()
+
+TreeJoined |>
+  dplyr::mutate(delta = CARBON_AG.y - CARBON_AG.x) |>
+  dplyr::select(CARBON_AG.x, CARBON_AG.y, delta) |>
+  dplyr::arrange(delta)#|>
+  # View()
+
+
+```
+
+
+## Analysis
+
+
+```{r}
+## Original Trees with Carbon
+## Trees that exist both pre-fire and have a carbon value
+TreesOriginal <- TreeJoined |>
+  dplyr::filter(is.na(SPCD.x) == F,# & is.na(SPCD.y) == F,
+                is.na(CARBON_AG.x) == F) |>
+  dplyr::select(PLOT, SUBP, TREE, STATUSCD.x, STATUSCD.y, DECAYCD.x, DECAYCD.y, STANDING_DEAD_CD.x, STANDING_DEAD_CD.y, DIA.x, DIA.y, HT.x, HT.y, CARBON_AG.x, CARBON_AG.y)
+
+# Remaining Trees with Carbon
+## Trees that exist both pre- and post-fire with a carbon value post fire
+TreesRemaining <- TreeJoined |>
+  dplyr::filter(is.na(SPCD.x) == F & is.na(SPCD.y) == F,
+                is.na(CARBON_AG.y) == F)|>
+  
+  ## Gonna subset and add some classes that make it easier for reference
+  dplyr::select(PLOT, SUBP, TREE, STATUSCD.x, STATUSCD.y, DECAYCD.x, DECAYCD.y, STANDING_DEAD_CD.x, STANDING_DEAD_CD.y, DIA.x, DIA.y, HT.x, HT.y, CARBON_AG.x, CARBON_AG.y) |>
+  ## Add some helpful classes. How the tree changed between the two panels
+  dplyr::mutate(Change_Status = as.factor(dplyr::case_when(
+    
+    (STATUSCD.x == 2 & STATUSCD.y == 2) ~ 'Dead Pre-Fire',
+    (STATUSCD.x == 1 & STATUSCD.y == 2) ~ 'Dead Post-Fire',
+    (STATUSCD.x == 1 & STATUSCD.y == 1) ~ 'Survived',
+    
+    
+    (is.na(STATUSCD.x) == T & STATUSCD.y == 2) ~ 'New Growth',
+    .default = "other"
+    )
+    )) |>
+  dplyr::mutate(Change_Status = forcats::fct_relevel(as.factor(Change_Status), c('Dead Pre-Fire', 'Dead Post-Fire', 'Survived')))
+
+
+paste('Trees Originally:', nrow(TreesOriginal))
+paste('Trees Remaining:', nrow(TreesRemaining))
+
+head(TreesOriginal)
+head(TreesRemaining)
+
+
+
+```
+
+
+
+### Mortality Stats
+- The number of pre-fire trees remaining post-fire are: `r nrow(TreesRemaining)` out of `r nrow(TREE2)` trees
+
+
+### Carbon change
+```{r}
+TreesOriginalCarbon <- sum(TreesOriginal$CARBON_AG.x, na.rm = T)
+TreesRemainingCarbon <- sum(TreesRemaining$CARBON_AG.y, na.rm = T)
+
+TreesOriginalCarbon
+TreesRemainingCarbon
+
+paste('carbon remaining:', TreesRemainingCarbon/TreesOriginalCarbon, '%')
+# paste('number of pre-fire trees remaining:', nrow(TreesRemaining))
+# paste('out of', nrow(TreesOriginal))
+# 
+# paste('The amount of carbon remaining:', TreesRemainingCarbon)
+# paste('out of', TreesOriginalCarbon, 'pre-fire carbon, which is', (TreesRemainingCarbon/TreesOriginalCarbon), '%')
+```
+
+- The amount of carbon remaining: `r TreesRemainingCarbon` out of `r TreesOriginalCarbon`, pre-fire carbon, which is `r `TreesRemainingCarbon/TreesOriginalCarbon`%.
+
+
+## LOOK AT FLUX MEASUREMENT
+```{r}
+TreesRemainingCarbonFlux <- TreesRemaining |>
+  dplyr::mutate(Carbon_Flux = (CARBON_AG.y - CARBON_AG.x - 37)*0.45358237) ## NEed to remove after
+
+
+## Carbon point plot
+ggplot(data = TreesRemainingCarbonFlux) +
+  geom_point(aes(x = CARBON_AG.x*0.45358237, y = CARBON_AG.y*0.45358237, color = Change_Status)) +
+  geom_smooth(aes(x = CARBON_AG.x*0.45358237, y = CARBON_AG.y*0.45358237),method='lm', formula= y~x, se = FALSE) +  
+  geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 2) +
+  stat_cor(aes(x = CARBON_AG.x*0.45358237, y = CARBON_AG.y*0.45358237), label.y = 540) + 
+  stat_regline_equation(aes(x = CARBON_AG.x*0.45358237, y = CARBON_AG.y*0.45358237), label.y = 570) +
+  
+  xlab('Pre-fire Aboveground Carbon (kg)') +
+  ylab('Post-fire Aboveground Carbon (kg)') +
+  theme_minimal()
+
+ggsave('Figures/FIA_Carbon_Pre-Post_Fire.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+## Carbon flux by Plot
+ggplot(TreesRemainingCarbonFlux) +
+  geom_boxplot(aes(x = as.factor(PLOT), y = Carbon_Flux*0.45358237)) +
+  theme_minimal()
+
+## Carbon FLux by Change Status
+ggplot(TreesRemainingCarbonFlux) +
+  geom_boxplot(aes(x = as.factor(Change_Status), y = Carbon_Flux*0.45358237), colour = '#C00000', notch = T) +
+  geom_abline(intercept = 0, slope = 0, color = '#666666', linetype = 2) +
+  xlab('Change Status') +
+  ylab('Carbon Change (kg)') +
+  theme_minimal()
+
+ggsave('Figures/FIA_Carbon_Change.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+```
+
+
+Plot of pre and post fire stats and carbon
+
+```{r}
+TreesRemainingTreeFlux <- TreesRemaining |>
+  dplyr::mutate(DIA_Flux = DIA.y - DIA.x,
+                HT_Flux = HT.y - HT.x)
+
+## DIA flux boxplot by plot
+ggplot(data = TreesRemainingTreeFlux)+
+  geom_boxplot(aes(x = as.factor(PLOT), y = DIA_Flux)) +
+  
+  xlab('Plot') +
+  ylab('DIA Flux (in)') +
+  theme_minimal()
+
+# ## HT flux boxplot by plot
+# ggplot(data = TreesRemainingTreeFlux)+
+#   geom_boxplot(aes(x = as.factor(Change_Status), y = DIA_Flux *2.54), color = '#C00000', notch = T) +
+#   xlab('Plot') +
+#   ylab('DBH Change (cm)') +
+#   theme_minimal()
+
+## DIA flux boxplot by change_status
+ggplot(data = TreesRemainingTreeFlux)+
+  geom_boxplot(aes(x = as.factor(Change_Status), y = DIA_Flux *2.54), color = '#C00000', notch = T) +
+  geom_abline(intercept = 0, slope = 0, color = '#666666', linetype = 2) +
+  xlab('Change Status') +
+  ylab('DBH Change (cm)') +
+  theme_minimal()
+
+ggsave('Figures/FIA_DIA_Change.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+## HT flux boxplot by change_status
+ggplot(data = TreesRemainingTreeFlux)+
+  geom_boxplot(aes(x = as.factor(Change_Status), y = HT_Flux * 0.3048), color = '#C00000', notch = T) +
+    geom_abline(intercept = 0, slope = 0, color = '#666666', linetype = 2) +
+  xlab('Change Status') +
+  ylab('HT Change (m)') +
+  theme_minimal()
+
+ggsave('Figures/FIA_HT_Change.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+## DIA point plot
+ggplot(data = TreesRemainingTreeFlux) +
+  geom_point(aes(x = DIA.x*2.54, y = DIA.y*2.54, color = Change_Status)) +
+  geom_smooth(aes(x = DIA.x*2.54, y = DIA.y*2.54),method='lm', formula= y~x, se = FALSE) +  
+  geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 2) +
+  stat_cor(aes(x = HT.x, y = HT.y), label.y = 13) + 
+  stat_regline_equation(aes(x = HT.x, y = HT.y), label.y = 13.5) +
+  
+  xlab('Pre-fire DBH (cm)') +
+  ylab('Post-fire DBH (cm)') +
+  theme_minimal()
+
+ggsave('Figures/FIA_DIA_Pre-Post_Fire.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+## HT point plot
+ggplot(data = TreesRemainingTreeFlux) +
+  geom_point(aes(x = HT.x, y = HT.y, color = Change_Status)) +
+  geom_smooth(aes(x = HT.x, y = HT.y),method='lm', formula= y~x, se = FALSE) +  
+  geom_abline(intercept = 0, slope = 1, color = 'red', linetype = 2) +
+  stat_cor(aes(x = HT.x, y = HT.y), label.y = 68) + 
+  stat_regline_equation(aes(x = HT.x, y = HT.y), label.y = 70) +
+  
+  xlab('Pre-fire HT (ft)') +
+  ylab('Post-fire HT (ft)') +
+  theme_minimal()
+
+ggsave('Figures/FIA_HT_Pre-Post_Fire.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+
+# ggplot(data = TreesRemainingCarbon) +
+#   geom_point(aes(x = CARBON_AG.x, y = CARBON_AG.y, color = Change_Status)) +
+#   geom_smooth(aes(x = CARBON_AG.x, y = CARBON_AG.y),method='lm', formula= y~x) +
+#   geom_abline(intercept = 0, slope = 1, color = 'red')
+
+```
+
+
+```{r}
+# Trees lost
+# Original Trees with Carbon
+TreesLost <- TreeJoined |>
+  dplyr::filter(#is.na(SPCD.x) == F & is.na(SPCD.y) == T,
+                is.na(CARBON_AG.x) == F,
+                is.na(CARBON_AG.y) == T) |>
+  dplyr::select(PLOT, SUBP, TREE, STATUSCD.x, STATUSCD.y, STANDING_DEAD_CD.x, STANDING_DEAD_CD.y, DIA.x, DIA.y, HT.x, HT.y, CARBON_AG.x, CARBON_AG.y)
+
+nrow(TreesLost)
+```
+
+- The number of trees with carbon lost was: `r nrow(TreesLost)`
+- The amount of carbon lost was `r sum(TreesLost$CARBON_AG.x)`
+
+
+
+### DECAY CLASS CHange
+
+```{r}
+TreesRemainingDecayClassChange <- TreesOriginal |>
+  dplyr::mutate(DECAYCD.x = dplyr::if_else(is.na(DECAYCD.x) == T & is.na(CARBON_AG.x) == F, 
+                                           true = 'Standing Live', 
+                                           false = dplyr::if_else((is.na(DECAYCD.x) == T & is.na(CARBON_AG.x) == T), 
+                                           'Not Standing Dead',
+                                           as.character(DECAYCD.x)))) |>
+  dplyr::mutate(DECAYCD.y = dplyr::if_else(is.na(DECAYCD.y) == T & is.na(CARBON_AG.y) == F, 
+                                           true = 'Standing Live', 
+                                           false = dplyr::if_else((is.na(DECAYCD.y) == T & is.na(CARBON_AG.y) == T), 
+                                           'Dead - Not Standing',
+                                           as.character(DECAYCD.y)))) |>
+  
+  dplyr::mutate(DECAYCD_Change = as.character(paste0(DECAYCD.x, ' to ', DECAYCD.y))) |>
+  
+  dplyr::select(DECAYCD.x, DECAYCD.y, DECAYCD_Change, CARBON_AG.x) |>
+  
+  dplyr::group_by(DECAYCD.x, DECAYCD.y) |>
+  dplyr::summarise(CARBON_AG.x = sum(CARBON_AG.x)) |>
+  dplyr::ungroup() |>
+  
+  dplyr::mutate(`Decay Class Pre-Fire` = forcats::fct_relevel(DECAYCD.x, 'Standing Live', '1', '2', '3', '4', '5', 'Dead - Not Standing'),
+                `Decay Class Post-Fire` = forcats::fct_relevel(DECAYCD.y, 'Standing Live', '1', '2', '3', '4', '5', 'Dead - Not Standing')) |>
+  
+  dplyr::filter(DECAYCD.x != 2,
+                DECAYCD.x != 3)
+
+
+TreesRemainingDecayClassChange
+
+
+col <- c("#2f6b0c", '#70493D', '#E2AC76')
+
+ggplot(data = TreesRemainingDecayClassChange|> dplyr::mutate(CARBON_AG.x = CARBON_AG.x * 0.453592#,
+                                                              # CARBON_AG.y = CARBON_AG.y * 0.453592
+                                                             ),
+       aes(axis1 = `Decay Class Pre-Fire`, axis2 =`Decay Class Post-Fire`, y = CARBON_AG.x)) +
+  geom_alluvium(aes(fill = `Decay Class Pre-Fire`)) +
+  geom_stratum(aes(fill = `Decay Class Post-Fire`), fill = NA, color = "black") +
+  
+  
+  geom_text(stat = 'stratum',
+            aes(label = after_stat(stratum))) +
+  
+  geom_label(stat = 'stratum', aes(label = after_stat(stratum))) +
+  scale_x_discrete(limits = c('Pre-Fire Decay Class', 'Post-Fire Decay Class'),
+                   expand = c(0.15, 0.05)) +
+  ylab('Aboveground Carbon (kg)') +
+  
+  scale_fill_manual(values = col) +
+   # scale_fill_brewer(type = "qual", palette = 'Set1') +
+  
+  
+  guides(fill="none") +
+  theme_minimal()
+
+ggsave('Figures/FIA_DECAYCD_Flow.png', dpi = 300, height = 4, width = 6, unit = 'in')
+
+
+# ggplot(data = TreesRemainingDecayClassChange |> dplyr::mutate(CARBON_AG.x = CARBON_AG.x * 0.453592,
+#                                                               CARBON_AG.y = CARBON_AG.y * 0.453592),
+#        aes(axis1 = `Decay Class Pre-Fire`, axis2 =`Decay Class Post-Fire`, y = CARBON_AG.x)) +
+#   geom_alluvium(aes(fill = `Decay Class Post-Fire`)) +
+#   geom_stratum(aes(fill = `Decay Class Post-Fire`), fill = NA, color = "black") +
+#   
+#   
+#   geom_text(stat = 'stratum',
+#             aes(label = after_stat(stratum))) +
+#   
+#   geom_label(stat = 'stratum', aes(label = after_stat(stratum))) +
+#   scale_x_discrete(limits = c('Pre-Fire Decay Class', 'Post-Fire Decay Class'),
+#                    expand = c(0.15, 0.05)) +
+#   ylab('Aboveground Carbon (kg)') +
+#   
+#   scale_fill_manual(values = col) +
+#    # scale_fill_brewer(type = "qual", palette = 'Set1') +
+#   
+#   # scale_x_discrete(limits = c("Pre-Fire Decay Class", "Post-Fire Decay Class"), expand = c(.02, .02)) +
+#   
+#   
+#   
+#   guides(fill="none") +
+#   theme_minimal()
+# 
+# # ggsave('Figures/FIA_DECAYCD_Flow', )
+# ggsave('Figures/FIA_DECAYCD_Flow.png', dpi = 300, height = 4, width = 6, unit = 'in')
+# ggplot(data = vaccinations,
+#        aes(axis1 = survey, axis2 = response, y = freq)) +
+#   geom_alluvium() +
+#   geom_stratum()
+```
+
+```{r}
+TreesRemainingDecayClassChange <- TreesOriginal |>
+  dplyr::mutate(DECAYCD.x = dplyr::if_else(is.na(DECAYCD.x) == T & is.na(CARBON_AG.x) == F, 
+                                           true = 'Standing Live', 
+                                           false = dplyr::if_else((is.na(DECAYCD.x) == T & is.na(CARBON_AG.x) == T), 
+                                           'Not Standing Dead',
+                                           as.character(DECAYCD.x)))) |>
+  dplyr::mutate(DECAYCD.y = dplyr::if_else(is.na(DECAYCD.y) == T & is.na(CARBON_AG.y) == F, 
+                                           true = 'Standing Live', 
+                                           false = dplyr::if_else((is.na(DECAYCD.y) == T & is.na(CARBON_AG.y) == T), 
+                                           'Not Standing Dead',
+                                           as.character(DECAYCD.y)))) |>
+  
+  dplyr::mutate(DECAYCD_Change = as.character(paste0(DECAYCD.x, ' to ', DECAYCD.y))) |>
+  
+  dplyr::select(
+    DECAYCD.x, DECAYCD.y,CARBON_AG.x
+  )
+  
+  
+
+head(TreesRemainingDecayClassChange)
+
+nodes <- data.frame(
+  name=c(as.character(TreesRemainingDecayClassChange$DECAYCD.x), as.character(TreesRemainingDecayClassChange$DECAYCD.y)) |> 
+    unique()
+)
+
+TreesRemainingDecayClassChange$IDsource <- match(TreesRemainingDecayClassChange$DECAYCD.x, nodes$name)-1 
+TreesRemainingDecayClassChange$IDtarget <- match(TreesRemainingDecayClassChange$DECAYCD.y, nodes$name)-1
+
+
+my_color <- 'd3.scaleOrdinal() .domain(["group_A", "group_B","group_C", "group_D", "group_E", "group_F", "group_G", "group_H"]) .range(["blue", "blue" , "blue", "red", "red", "yellow", "purple", "purple"])'
+
+
+p <- sankeyNetwork(Links = TreesRemainingDecayClassChange, Nodes = nodes, Source = "IDsource", Target = "IDtarget", 
+              Value = "value", NodeID = "name", colourScale=my_color)
+
+p
+```
+
+
+
+
+
+
